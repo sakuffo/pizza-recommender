@@ -1,0 +1,65 @@
+# Language-specific ignores (Go)
+/vendor/
+*.test
+.go-cache/
+
+# Development artifacts
+.idea/
+.vscode/
+*.swp
+*.swo
+dist/
+build/
+out/
+test/
+tests/
+*_test.go
+debug/
+*.log
+
+# Version control
+.git/
+.gitignore
+.svn/
+.hg/
+
+# Environment and secrets
+.env*
+*.env
+*.pem
+*.key
+*.crt
+config.local.*
+*.local.yml
+
+# Project-specific patterns
+# Documentation
+/docs/
+*.md
+README*
+
+# Docker and Compose files
+Dockerfile*
+docker-compose*
+compose.yaml
+
+# Temporary files
+/tmp/
+/temp/
+*.tmp
+
+# Local development
+.local/
+local/
+
+# Backup files
+*.bak
+
+# OS/Editor swap and temp files
+*~
+
+# Executables and binaries
+*.exe
+
+# Ignore self
+.dockerignore
