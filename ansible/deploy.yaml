@@ -1,0 +1,118 @@
+---
+- name: Deploy Pizza Recommender Backend
+  hosts: backend
+  become: yes # Required for installations, directory creation, ownership
+  vars:
+    backend_deploy_dir: /opt/pizza-backend
+    backend_user: pizzauser # Assumes this user exists
+    backend_group: pizzauser # Assumes this group exists
+
+  tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: yes
+      changed_when: false # Don't report change for cache update
+
+    - name: Install Go and Git
+      ansible.builtin.apt:
+        name:
+          - golang-go
+          - git
+        state: present
+
+    - name: Ensure backend deployment directory exists
+      ansible.builtin.file:
+        path: "{{ backend_deploy_dir }}"
+        state: directory
+        owner: "{{ backend_user }}"
+        group: "{{ backend_group }}"
+        mode: '0755'
+
+    - name: Clone or update backend code repository
+      ansible.builtin.git:
+        repo: "{{ git_repo_url }}"
+        dest: "{{ backend_deploy_dir }}"
+        version: "{{ git_version }}"
+        force: yes
+      become_user: "{{ backend_user }}"
+
+    # Note: Building Go binary and service management are still out of scope.
+
+- name: Deploy Pizza Recommender Frontend
+  hosts: frontend
+  become: yes # Required for installations, directory creation, ownership
+  vars:
+    frontend_deploy_dir: /var/www/pizza-app
+    web_user: www-data
+    web_group: www-data
+    # The backend IP is taken from the inventory vars of the *first* host in the 'backend' group
+    backend_ip: "{{ hostvars[groups['backend'][0]]['backend_ip_address'] }}"
+    nginx_site_name: pizza-app # Name for the Nginx config file
+
+  tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: yes
+      changed_when: false
+
+    - name: Install Nginx
+      ansible.builtin.apt:
+        name: nginx
+        state: present
+
+    - name: Ensure frontend deployment directory exists
+      ansible.builtin.file:
+        path: "{{ frontend_deploy_dir }}"
+        state: directory
+        owner: "{{ web_user }}"
+        group: "{{ web_group }}"
+        mode: '0755'
+
+    - name: Clone or update frontend code repository
+      ansible.builtin.git:
+        repo: "{{ git_repo_url }}"
+        dest: "{{ frontend_deploy_dir }}"
+        version: "{{ git_version }}"
+        force: yes
+
+    - name: Ensure correct permissions for web server
+      ansible.builtin.file:
+        path: "{{ frontend_deploy_dir }}"
+        owner: "{{ web_user }}"
+        group: "{{ web_group }}"
+        recurse: yes
+
+    - name: Template Nginx site configuration
+      ansible.builtin.template:
+        # Template source is within the cloned repo structure
+        src: "{{ frontend_deploy_dir }}/ansible/templates/nginx.conf.j2"
+        dest: "/etc/nginx/sites-available/{{ nginx_site_name }}.conf"
+        owner: root
+        group: root
+        mode: '0644'
+      notify: Reload Nginx # Trigger handler if template changes
+
+    - name: Enable Nginx site
+      ansible.builtin.file:
+        src: "/etc/nginx/sites-available/{{ nginx_site_name }}.conf"
+        dest: "/etc/nginx/sites-enabled/{{ nginx_site_name }}.conf"
+        state: link
+      notify: Reload Nginx # Trigger handler if link is created/changed
+
+    # Optional: Remove default Nginx site if it exists and conflicts
+    # - name: Remove default Nginx site if it exists
+    #   ansible.builtin.file:
+    #     path: /etc/nginx/sites-enabled/default
+    #     state: absent
+    #   notify: Reload Nginx
+
+  handlers:
+    - name: Reload Nginx
+      ansible.builtin.service:
+        name: nginx
+        state: reloaded
+      listen: "Reload Nginx" # Explicitly listen for the notification name
+
+    # Note: Service *starting* is assumed handled manually or by install.
+
+# Note: Nginx configuration and service management are still out of scope. 
