@@ -7,11 +7,11 @@ FROM golang:${GO_VERSION}-alpine AS builder
 RUN --mount=type=cache,target=/var/cache/apk \
     apk add --no-cache git
 
-WORKDIR /app
+WORKDIR /build
 
 # Copy go.mod and go.sum first for dependency resolution and caching
-COPY --link go.mod go.mod
-COPY --link go.sum go.sum
+COPY --link app/go.mod .
+COPY --link app/go.sum .
 
 # Download dependencies (with cache mounts for speed)
 RUN --mount=type=cache,target=/go/pkg/mod \
@@ -19,7 +19,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download
 
 # Copy only the Go source code required for the backend
-COPY --link pizza-mix.go pizza-mix.go
+COPY --link app/pizza-mix.go .
 
 # Build the Go binary (static, stripped)
 RUN --mount=type=cache,target=/go/pkg/mod \
@@ -39,7 +39,7 @@ RUN --mount=type=cache,target=/var/cache/apk \
     apk add --no-cache ca-certificates
 
 # Copy only the built backend binary
-COPY --from=builder /app/pizza-backend /app/pizza-backend
+COPY --from=builder /build/pizza-backend /app/pizza-backend
 
 # Use non-root user
 USER pizza
@@ -47,4 +47,4 @@ USER pizza
 # Backend API listens on 8080
 EXPOSE 8080
 
-ENTRYPOINT ["/app/pizza-backend"]
+ENTRYPOINT ["/app/pizza-backend"] 

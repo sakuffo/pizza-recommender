@@ -1,0 +1,27 @@
+services:
+  backend:
+    build:
+      context: .. # Build context is the parent directory (project root)
+      dockerfile: docker/Dockerfile # Path to Dockerfile relative to context
+    container_name: pizza-backend-service
+    restart: unless-stopped
+    init: true
+    networks:
+      - pizza-net
+
+  frontend:
+    build:
+      context: .. # Build context is the parent directory (project root)
+      dockerfile: docker/Dockerfile.frontend # Path to Dockerfile relative to context
+    container_name: pizza-frontend-service
+    restart: unless-stopped
+    ports:
+      - "8000:80" 
+    depends_on:
+      - backend 
+    networks:
+      - pizza-net
+
+networks:
+  pizza-net:
+    driver: bridge 
