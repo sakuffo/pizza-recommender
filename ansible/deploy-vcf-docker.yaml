@@ -1,0 +1,166 @@
+---
+- name: Deploy Pizza Mixing App with Docker on VCF Ubuntu VMs
+  hosts: vcf_vms
+  become: yes
+  vars:
+    app_dir: /opt/pizza-mixing-app
+    docker_compose_version: "2.24.0"
+    git_repo: "{{ git_repo_url | default('https://github.com/your-username/pizza-mixing.git') }}"
+    git_branch: "{{ git_branch | default('main') }}"
+
+  tasks:
+    - name: Ensure system is Ubuntu
+      ansible.builtin.fail:
+        msg: "This playbook requires Ubuntu"
+      when: ansible_distribution != 'Ubuntu'
+
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install prerequisites for Docker
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - gnupg
+          - lsb-release
+          - git
+          - python3-pip
+        state: present
+
+    - name: Add Docker GPG key
+      ansible.builtin.apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        state: present
+        keyring: /usr/share/keyrings/docker-archive-keyring.gpg
+
+    - name: Add Docker repository
+      ansible.builtin.apt_repository:
+        repo: "deb [arch={{ ansible_architecture }} signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+        update_cache: yes
+
+    - name: Install Docker packages
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+        update_cache: yes
+
+    - name: Ensure Docker service is started and enabled
+      ansible.builtin.systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Add ansible user to docker group
+      ansible.builtin.user:
+        name: "{{ ansible_user }}"
+        groups: docker
+        append: yes
+
+    - name: Install Docker SDK for Python
+      ansible.builtin.pip:
+        name: docker
+        state: present
+
+    - name: Create application directory
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: "{{ ansible_user }}"
+        group: "{{ ansible_user }}"
+        mode: '0755'
+
+    - name: Clone or update application repository
+      ansible.builtin.git:
+        repo: "{{ git_repo }}"
+        dest: "{{ app_dir }}"
+        version: "{{ git_branch }}"
+        force: yes
+      become_user: "{{ ansible_user }}"
+
+    - name: Configure firewall for application
+      community.general.ufw:
+        rule: allow
+        port: "{{ item.port }}"
+        proto: tcp
+        comment: "{{ item.comment }}"
+      loop:
+        - { port: 8000, comment: "Pizza App Frontend" }
+        - { port: 22, comment: "SSH" }
+      when: ansible_facts['os_family'] == "Debian"
+      ignore_errors: yes
+
+    - name: Stop existing Docker containers
+      ansible.builtin.shell: |
+        cd {{ app_dir }}/docker
+        docker compose down
+      ignore_errors: yes
+
+    - name: Build and start Docker containers
+      ansible.builtin.shell: |
+        cd {{ app_dir }}/docker
+        docker compose up -d --build
+      register: docker_result
+
+    - name: Wait for application to be ready
+      ansible.builtin.wait_for:
+        port: 8000
+        host: "{{ ansible_default_ipv4.address }}"
+        delay: 10
+        timeout: 60
+
+    - name: Verify containers are running
+      ansible.builtin.shell: |
+        cd {{ app_dir }}/docker
+        docker compose ps --format json
+      register: container_status
+      changed_when: false
+
+    - name: Create systemd service for auto-start
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/pizza-app.service
+        content: |
+          [Unit]
+          Description=Pizza Mixing App Docker Compose
+          Requires=docker.service
+          After=docker.service
+
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          WorkingDirectory={{ app_dir }}/docker
+          ExecStart=/usr/bin/docker compose up -d
+          ExecStop=/usr/bin/docker compose down
+          TimeoutStartSec=0
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Enable pizza-app service for auto-start
+      ansible.builtin.systemd:
+        name: pizza-app
+        enabled: yes
+        daemon_reload: yes
+
+    - name: Display deployment information
+      ansible.builtin.debug:
+        msg:
+          - "========================================="
+          - "Pizza Mixing App deployed successfully!"
+          - "========================================="
+          - "Access the application at:"
+          - "  http://{{ ansible_default_ipv4.address }}:8000"
+          - "  http://{{ ansible_hostname }}:8000"
+          - ""
+          - "Commands:"
+          - "  View logs: cd {{ app_dir }}/docker && docker compose logs -f"
+          - "  Stop app: cd {{ app_dir }}/docker && docker compose down"
+          - "  Start app: cd {{ app_dir }}/docker && docker compose up -d"

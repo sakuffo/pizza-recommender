@@ -1,50 +1,61 @@
 # syntax=docker/dockerfile:1
 
-ARG GO_VERSION=1.24.1
-FROM golang:${GO_VERSION}-alpine AS builder
-
-# Install git for Go modules that require it
-RUN --mount=type=cache,target=/var/cache/apk \
-    apk add --no-cache git
+# --- Build Stage ---
+FROM golang:1.24.1-alpine AS builder
 
 WORKDIR /build
 
-# Copy go.mod and go.sum first for dependency resolution and caching
-COPY --link app/go.mod .
-COPY --link app/go.sum .
+# Install build dependencies if needed (e.g., for CGO like go-sqlite3)
+# We need gcc and potentially other build tools for CGO
+RUN apk add --no-cache build-base
 
-# Download dependencies (with cache mounts for speed)
+# Restore dependencies using caches
+# Copy go.mod and go.sum first to leverage Docker cache
+COPY app/go.mod app/go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     go mod download
 
-# Copy only the Go source code required for the backend
-COPY --link app/pizza-mix.go .
+# Copy the entire app source code
+# Make sure to copy ALL .go files needed for the build
+COPY app/ ./
 
-# Build the Go binary (static, stripped)
+# Build the Go app
+# Use 'go build .' to build all go files in the current directory (/build)
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o pizza-backend pizza-mix.go
+    CGO_ENABLED=1 GOOS=linux go build -ldflags="-s -w" -o /app/pizza-backend .
+    # Changed CGO_ENABLED=1 because go-sqlite3 requires it
+    # Changed output path to /app/pizza-backend
+    # Changed 'pizza-mix.go' to '.' to build all files
 
-# --- Final minimal image ---
-FROM alpine:latest AS final
-
-# Create non-root user
-RUN addgroup -S pizza && adduser -S pizza -G pizza
+# --- Final Stage ---
+FROM alpine:latest
 
 WORKDIR /app
 
-# Install CA certificates for HTTPS (might still be needed if backend makes external calls)
-RUN --mount=type=cache,target=/var/cache/apk \
-    apk add --no-cache ca-certificates
+# Install runtime dependencies if needed (e.g., CA certificates, SQLite libs)
+# go-sqlite3 is CGO based and links against libc, which is standard in alpine.
+# If using a different base or needing specific SQLite features, might need:
+# RUN apk add --no-cache sqlite-libs
+RUN apk add --no-cache ca-certificates tzdata sqlite-libs # Add sqlite-libs
 
-# Copy only the built backend binary
-COPY --from=builder /build/pizza-backend /app/pizza-backend
+# Create a non-root user to run the application
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
-# Use non-root user
-USER pizza
+# Copy the compiled binary from the builder stage
+COPY --from=builder /app/pizza-backend /app/pizza-backend
 
-# Backend API listens on 8080
+# Create the data directory and change its ownership to the non-root user
+# Do this *before* switching the user context
+RUN mkdir /app/data && chown appuser:appgroup /app/data
+
+# Switch to the non-root user
+USER appuser
+
+# Expose the port the app listens on (optional but good practice)
 EXPOSE 8080
 
-ENTRYPOINT ["/app/pizza-backend"] 
+# Command to run the application
+# The database will be created in /app/data/pizza.db which now exists and is writable
+CMD ["/app/pizza-backend"] 
