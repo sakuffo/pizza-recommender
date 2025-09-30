@@ -1,4 +1,22 @@
 services:
+  database:
+    image: postgres:16-alpine
+    container_name: pizza-database
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: pizza
+      POSTGRES_PASSWORD: pizzapass
+      POSTGRES_DB: pizza
+    volumes:
+      - pizza-db-data:/var/lib/postgresql/data
+    networks:
+      - pizza-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pizza"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   backend:
     build:
       context: .. # Build context is the parent directory (project root)
@@ -6,6 +24,16 @@ services:
     container_name: pizza-backend-service
     restart: unless-stopped
     init: true
+    environment:
+      DB_HOST: database
+      DB_PORT: 5432
+      DB_USER: pizza
+      DB_PASSWORD: pizzapass
+      DB_NAME: pizza
+      DB_SSLMODE: disable
+    depends_on:
+      database:
+        condition: service_healthy
     networks:
       - pizza-net
 
@@ -16,12 +44,15 @@ services:
     container_name: pizza-frontend-service
     restart: unless-stopped
     ports:
-      - "8000:80" 
+      - "8000:80"
     depends_on:
-      - backend 
+      - backend
     networks:
       - pizza-net
 
 networks:
   pizza-net:
-    driver: bridge 
+    driver: bridge
+
+volumes:
+  pizza-db-data: 

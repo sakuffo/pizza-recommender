@@ -25,12 +25,12 @@ type PizzaRecommendation struct {
 }
 
 // fetchAllPizzas retrieves all pizzas with their ingredients from the database.
-// Uses GROUP_CONCAT for efficiency.
+// Uses STRING_AGG for efficiency (PostgreSQL).
 func fetchAllPizzas(db *sql.DB) ([]Pizza, error) {
 	query := `
 		SELECT
 			p.name,
-			COALESCE(GROUP_CONCAT(i.name, '|'), '') -- Use '|' as delimiter, handle no ingredients
+			COALESCE(STRING_AGG(i.name, '|' ORDER BY i.name), '') -- Use '|' as delimiter, handle no ingredients
 		FROM pizzas p
 		LEFT JOIN pizza_ingredients pi ON p.id = pi.pizza_id
 		LEFT JOIN ingredients i ON pi.ingredient_id = i.id
@@ -108,16 +108,24 @@ func getRecommendations(db *sql.DB, disliked, preferred []string) ([]PizzaRecomm
 		preferredArgs[i] = v
 	}
 
-	// Create placeholders like (?,?,?) or return NULL if the list is empty
+	// Create placeholders like ($1,$2,$3) for PostgreSQL or return NULL if the list is empty
 	// This prevents SQL errors with empty IN clauses.
 	dislikedPlaceholders := "NULL"
 	if len(dislikedArgs) > 0 {
-		dislikedPlaceholders = "(" + strings.Repeat("?,", len(dislikedArgs)-1) + "?)"
+		placeholders := make([]string, len(dislikedArgs))
+		for i := range dislikedArgs {
+			placeholders[i] = fmt.Sprintf("$%d", i+len(preferredArgs)+1)
+		}
+		dislikedPlaceholders = "(" + strings.Join(placeholders, ",") + ")"
 	}
 
 	preferredPlaceholders := "NULL"
 	if len(preferredArgs) > 0 {
-		preferredPlaceholders = "(" + strings.Repeat("?,", len(preferredArgs)-1) + "?)"
+		placeholders := make([]string, len(preferredArgs))
+		for i := range preferredArgs {
+			placeholders[i] = fmt.Sprintf("$%d", i+1)
+		}
+		preferredPlaceholders = "(" + strings.Join(placeholders, ",") + ")"
 	}
 	// --- End argument preparation ---
 
@@ -132,7 +140,7 @@ func getRecommendations(db *sql.DB, disliked, preferred []string) ([]PizzaRecomm
 	query := fmt.Sprintf(`
 		SELECT
 			p.name,
-			COALESCE(GROUP_CONCAT(i.name, '|'), '') as ingredients_concat,
+			COALESCE(STRING_AGG(i.name, '|' ORDER BY i.name), '') as ingredients_concat,
 			-- Calculate score: 2 points for each preferred ingredient found in this pizza's ingredients
 			SUM(CASE WHEN i.name IN %s THEN 2 ELSE 0 END) as score
 		FROM pizzas p

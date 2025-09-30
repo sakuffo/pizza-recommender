@@ -1,1 +1,16 @@
 *.bak
+.claude/
+
+# Environment files
+.env
+deploy/.env.vm
+
+# Development
+*.db
+*.sqlite
+*.sqlite3
+
+# Go
+/app/pizza-backend
+/app/data/
+

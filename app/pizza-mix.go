@@ -1,16 +1,13 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
-	"os"            // For checking if db file exists, path manipulation
-	"path/filepath" // For creating data directory
+	"os"
 
-	// For building IN clauses safely
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	// NOTE: database/sql and the driver (_ "github.com/mattn/go-sqlite3")
-	// are now only directly imported in db.go
 )
 
 // --- Data Structures for API ---
@@ -52,30 +49,31 @@ var pizzas = map[string][]string{
 
 // --- Main Application ---
 
+// getEnv retrieves an environment variable or returns a default value.
+func getEnv(key, defaultValue string) string {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	return value
+}
+
 func main() {
-	// Define path for the database file relative to the executable
-	dbDir := "./data" // Store DB in a 'data' subdirectory
-	dbPath := filepath.Join(dbDir, "pizza.db")
-	log.Printf("Database path set to: %s", dbPath)
+	// Build PostgreSQL connection string from environment variables
+	dbHost := getEnv("DB_HOST", "localhost")
+	dbPort := getEnv("DB_PORT", "5432")
+	dbUser := getEnv("DB_USER", "pizza")
+	dbPassword := getEnv("DB_PASSWORD", "pizzapass")
+	dbName := getEnv("DB_NAME", "pizza")
+	dbSSLMode := getEnv("DB_SSLMODE", "disable")
 
-	// Ensure the data directory exists
-	if err := os.MkdirAll(dbDir, 0755); err != nil { // 0755 permissions
-		log.Fatalf("FATAL: Failed to create data directory '%s': %v", dbDir, err)
-	}
+	connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		dbHost, dbPort, dbUser, dbPassword, dbName, dbSSLMode)
 
-	// Check if the database needs seeding (e.g., doesn't exist)
-	// This is a simple check; more robust checks could verify table existence/counts.
-	needsSeed := false
-	if _, err := os.Stat(dbPath); os.IsNotExist(err) {
-		log.Printf("Database file '%s' not found. Will attempt to create and seed.", dbPath)
-		needsSeed = true
-	} else if err != nil {
-		// Handle other potential stat errors (e.g., permissions)
-		log.Fatalf("FATAL: Error checking database file '%s': %v", dbPath, err)
-	}
+	log.Printf("Connecting to database at %s:%s...", dbHost, dbPort)
 
 	// 1. Connect to the database (function from db.go)
-	db, err := connectDB(dbPath)
+	db, err := connectDB(connStr)
 	if err != nil {
 		log.Fatalf("FATAL: DB connection failed: %v", err)
 	}
@@ -92,14 +90,10 @@ func main() {
 		log.Fatalf("FATAL: Migration failed: %v", err)
 	}
 
-	// 3. Seed Data (only if the file didn't exist initially) (function from db.go)
-	if needsSeed {
-		if err := seed(db, pizzas); err != nil {
-			// Log as fatal because if seeding fails on first run, app is likely unusable
-			log.Fatalf("FATAL: Seeding failed: %v", err)
-		}
-	} else {
-		log.Println("Database already exists. Skipping seed.")
+	// 3. Seed Data (function from db.go)
+	// Always attempt seeding - the function uses ON CONFLICT DO NOTHING to avoid duplicates
+	if err := seed(db, pizzas); err != nil {
+		log.Printf("WARN: Seeding failed (may be expected if already seeded): %v", err)
 	}
 
 	// --- Setup Gin Router and Middleware ---

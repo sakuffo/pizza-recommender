@@ -3,21 +3,32 @@
 ```
 .
 ├── README.md              # Project documentation
-├── ansible/               # Files for Ansible deployment
-│   ├── inventory.ini
-│   ├── deploy.yaml
-│   └── templates/
-│       └── nginx.conf.j2  # Nginx config template for Ansible
-├── docker/                # Files for Docker deployment
-│   ├── Dockerfile         # Builds Go backend API
-│   ├── Dockerfile.frontend # Builds Nginx frontend server
-│   ├── compose.yaml       # Docker Compose definition
-│   └── nginx-docker.conf  # Static Nginx config for Docker
+├── ARCHITECTURE.md        # Architecture documentation
+├── DEPLOYMENT.md          # Deployment guide
+├── MIGRATION_SUMMARY.md   # Migration guide from SQLite to PostgreSQL
+├── ansible/               # Ansible deployment automation
+│   ├── README.md          # Ansible documentation
+│   ├── deploy-vcf-docker.yaml  # Docker deployment playbook
+│   ├── inventory-vcf.ini  # Inventory example
+│   └── *.deprecated       # Legacy files (old 2-tier architecture)
+├── deploy/                # Deployment scripts and configs
+│   ├── VM_DEPLOYMENT.md   # VM deployment guide (3-tier)
+│   ├── deploy-ec2.sh      # EC2 deployment script
+│   ├── deploy-vcf.sh      # VCF deployment script
+│   ├── .env.docker        # Docker environment config
+│   └── .env.vm.example    # VM environment template
+├── docker/                # Docker deployment files
+│   ├── Dockerfile         # Backend container (Go + PostgreSQL driver)
+│   ├── Dockerfile.frontend # Frontend container (Nginx)
+│   ├── compose.yaml       # Docker Compose (3 services)
+│   └── nginx-docker.conf  # Nginx config for Docker
 └── app/                   # Application source code
-    ├── go.mod
-    ├── go.sum
-    ├── pizza-mix.go       # Go backend source code (API only)
-    └── static/            # Root for static frontend assets
+    ├── go.mod             # Go dependencies (PostgreSQL driver)
+    ├── go.sum             # Dependency checksums
+    ├── pizza-mix.go       # Main application
+    ├── db.go              # Database connection & migrations
+    ├── repository.go      # Data access layer
+    └── static/            # Frontend static assets
         ├── index.html
         ├── css/
         │   └── style.css
@@ -25,12 +36,14 @@
             └── script.js
 ```
 
-## Running with Docker (Split Frontend/Backend)
+## Running with Docker (Three-Tier Architecture)
 
 Files for this setup are located in the `docker/` directory.
 
-- The Go backend API runs in one container (`backend`).
-- The static frontend files (HTML/CSS/JS) are served by Nginx in another container (`frontend`).
+The application uses a three-tier architecture with separate services:
+- **Database**: PostgreSQL 16 in a container with persistent volume
+- **Backend**: Go API server in a container
+- **Frontend**: Nginx serving static files in a container
 
 **Requirements:**
 * Docker and Docker Compose installed
@@ -47,11 +60,16 @@ Files for this setup are located in the `docker/` directory.
     - Open your browser and go to `http://localhost:8000`.
 
 **Details:**
-- The Docker Compose setup defines two services: `backend` and `frontend` in `docker/compose.yaml`.
-- They communicate over a dedicated Docker network (`pizza-net`).
-- The `frontend` service depends on the `backend` service.
-- The frontend Nginx container exposes port `80` internally, which is mapped to port `8000` on your host machine.
-- The backend Go API listens on port `8080` internally within the Docker network, but this port is **not** exposed directly to your host machine by default.
+- The Docker Compose setup defines three services in `docker/compose.yaml`:
+  - `database`: PostgreSQL with data persistence
+  - `backend`: Go API connected to database
+  - `frontend`: Nginx proxying API requests to backend
+- Database data is stored in a Docker volume `pizza-db-data` for persistence
+- All services communicate over a dedicated Docker network (`pizza-net`)
+- The `backend` waits for database health check before starting
+- The `frontend` depends on the `backend` service
+- Only the frontend port is exposed: port `80` (container) → `8000` (host)
+- Backend and database ports remain internal to the Docker network
 - The frontend JavaScript (`static/js/script.js`) is configured to make API calls to `http://backend:8080`, using Docker's internal DNS to resolve the `backend` service name.
 - Both containers run as non-root users where applicable.
 
@@ -61,11 +79,26 @@ Files for this setup are located in the `docker/` directory.
     docker compose -f docker/compose.yaml down
     ```
 
-*No special environment variables or configuration are required for this Docker setup.*
+## Deployment Options
 
-## Running Manually on Separate VMs (e.g., vSphere)
+### Option 1: Docker Compose (Recommended for Development/Single Host)
+Use the Docker setup above for easy deployment on a single machine with all services containerized.
 
-This section describes how to deploy the application manually onto two separate Virtual Machines without using Docker. One VM hosts the Go backend API, and the other hosts the static frontend files served by Nginx.
+### Option 2: Separate VMs (Recommended for Production)
+Deploy the three tiers (database, backend, frontend) across separate VMs for better isolation, scalability, and resilience.
+
+**See detailed guide**: [`deploy/VM_DEPLOYMENT.md`](deploy/VM_DEPLOYMENT.md)
+
+**Quick overview**: The VM deployment requires:
+- PostgreSQL VM: Database server
+- Backend VM: Go application with environment variables pointing to database
+- Frontend VM: Nginx serving static files and proxying API requests
+
+## Running Manually on Separate VMs (Legacy Two-Tier)
+
+**Note**: This is the legacy two-tier setup. For the new three-tier architecture with PostgreSQL, see [`deploy/VM_DEPLOYMENT.md`](deploy/VM_DEPLOYMENT.md).
+
+This section describes the old manual deployment onto two separate Virtual Machines. One VM hosts the Go backend API with embedded SQLite, and the other hosts the static frontend files served by Nginx.
 
 **Prerequisites:**
 *   Two VMs created (e.g., in vSphere), running a Linux distribution (examples use Ubuntu/Debian commands).

@@ -6,15 +6,16 @@ import (
 	"log"
 	"strings"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/lib/pq"
 )
 
-// connectDB establishes a connection to the SQLite database file.
-func connectDB(path string) (*sql.DB, error) {
-	// Enable foreign key constraints for SQLite
-	db, err := sql.Open("sqlite3", path+"?_foreign_keys=on")
+// connectDB establishes a connection to the PostgreSQL database.
+// connStr should be a PostgreSQL connection string like:
+// "host=localhost port=5432 user=pizza password=pizzapass dbname=pizza sslmode=disable"
+func connectDB(connStr string) (*sql.DB, error) {
+	db, err := sql.Open("postgres", connStr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open database at %s: %w", path, err)
+		return nil, fmt.Errorf("failed to open database connection: %w", err)
 	}
 	// Ping verifies the connection is alive
 	if err := db.Ping(); err != nil {
@@ -27,15 +28,15 @@ func connectDB(path string) (*sql.DB, error) {
 
 // migrate ensures the necessary tables exist in the database.
 func migrate(db *sql.DB) error {
-	// Schema definition (should match db.sql)
+	// Schema definition for PostgreSQL
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS pizzas (
-           id   INTEGER PRIMARY KEY AUTOINCREMENT,
-           name TEXT    NOT NULL UNIQUE
+           id   SERIAL PRIMARY KEY,
+           name TEXT NOT NULL UNIQUE
          );`,
 		`CREATE TABLE IF NOT EXISTS ingredients (
-           id   INTEGER PRIMARY KEY AUTOINCREMENT,
-           name TEXT    NOT NULL UNIQUE
+           id   SERIAL PRIMARY KEY,
+           name TEXT NOT NULL UNIQUE
          );`,
 		`CREATE TABLE IF NOT EXISTS pizza_ingredients (
            pizza_id      INTEGER NOT NULL,
@@ -97,31 +98,32 @@ func seed(db *sql.DB, pizzasMap map[string][]string) error {
 	}()
 
 	// Prepare statements for efficiency within the transaction
-	pizzaInsertStmt, txErr := tx.Prepare(`INSERT OR IGNORE INTO pizzas(name) VALUES(?)`)
+	// PostgreSQL uses $1, $2 instead of ? placeholders
+	pizzaInsertStmt, txErr := tx.Prepare(`INSERT INTO pizzas(name) VALUES($1) ON CONFLICT (name) DO NOTHING`)
 	if txErr != nil {
 		return fmt.Errorf("failed to prepare pizza insert: %w", txErr)
 	}
 	defer pizzaInsertStmt.Close()
 
-	ingredientInsertStmt, txErr := tx.Prepare(`INSERT OR IGNORE INTO ingredients(name) VALUES(?)`)
+	ingredientInsertStmt, txErr := tx.Prepare(`INSERT INTO ingredients(name) VALUES($1) ON CONFLICT (name) DO NOTHING`)
 	if txErr != nil {
 		return fmt.Errorf("failed to prepare ingredient insert: %w", txErr)
 	}
 	defer ingredientInsertStmt.Close()
 
-	pizzaIngredientInsertStmt, txErr := tx.Prepare(`INSERT OR IGNORE INTO pizza_ingredients(pizza_id, ingredient_id) VALUES(?,?)`)
+	pizzaIngredientInsertStmt, txErr := tx.Prepare(`INSERT INTO pizza_ingredients(pizza_id, ingredient_id) VALUES($1, $2) ON CONFLICT (pizza_id, ingredient_id) DO NOTHING`)
 	if txErr != nil {
 		return fmt.Errorf("failed to prepare pizza_ingredient insert: %w", txErr)
 	}
 	defer pizzaIngredientInsertStmt.Close()
 
-	pizzaSelectStmt, txErr := tx.Prepare(`SELECT id FROM pizzas WHERE name = ?`)
+	pizzaSelectStmt, txErr := tx.Prepare(`SELECT id FROM pizzas WHERE name = $1`)
 	if txErr != nil {
 		return fmt.Errorf("failed to prepare pizza select: %w", txErr)
 	}
 	defer pizzaSelectStmt.Close()
 
-	ingredientSelectStmt, txErr := tx.Prepare(`SELECT id FROM ingredients WHERE name = ?`)
+	ingredientSelectStmt, txErr := tx.Prepare(`SELECT id FROM ingredients WHERE name = $1`)
 	if txErr != nil {
 		return fmt.Errorf("failed to prepare ingredient select: %w", txErr)
 	}
@@ -191,13 +193,15 @@ func seed(db *sql.DB, pizzasMap map[string][]string) error {
 	return nil // Success
 }
 
-// Helper to check for SQLite unique constraint error
-// NOTE: The exact error string might vary slightly. Check your logs if this doesn't work.
+// Helper to check for unique constraint error
+// PostgreSQL returns pq errors for constraint violations
 func isUniqueConstraintError(err error) bool {
 	if err == nil {
 		return false
 	}
-	// Check for common SQLite unique constraint error messages
+	// Check for PostgreSQL unique constraint error messages
 	errMsg := err.Error()
-	return strings.Contains(errMsg, "UNIQUE constraint failed") || strings.Contains(errMsg, "constraint failed")
+	return strings.Contains(errMsg, "duplicate key value") ||
+	       strings.Contains(errMsg, "unique constraint") ||
+	       strings.Contains(errMsg, "violates unique constraint")
 }
