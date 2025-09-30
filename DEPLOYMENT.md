@@ -58,7 +58,7 @@ export GIT_REPO_URL="https://github.com/your-username/pizza-mixing.git"
 
 ```bash
 # Download and run the deployment script
-curl -O https://raw.githubusercontent.com/your-repo/pizza-mixing/main/deploy/deploy-vcf.sh
+curl -O https://raw.githubusercontent.com/sakuffo/pizza-recommender/refs/heads/master/deploy/deploy-vcf.sh
 chmod +x deploy-vcf.sh
 
 # Set your repository URL (optional)
